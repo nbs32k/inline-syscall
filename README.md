@@ -12,9 +12,6 @@ Well, there are a lot of reasons. MSVC supports inline assembly just for the x86
 This library allows easy inlining for both x86 and x64 and also supports the win32k service table (gdi, user32 functions).
 It is also very lightweight.
 
-# Known issues
-x86 support for win32k.sys calls doesn't work as of [line 227](https://github.com/n00bes/inline-syscall/blob/5c42f68cd612742f6aceb5ef8e5bd3f72840e014/inline_syscall.hpp#L227). Win32u.dll' stub just crashes the code.
-
 # Code example
 Include the header and initialize the library by calling `inline_syscall::init( )` function.
 
@@ -125,7 +122,7 @@ int main( ) {
 	//	Initialize the library
 	//
 	Status = inline_syscall::init( );
-	printf( "inline_syscall::init( ): %x\n", Status );
+	printf( "inline_syscall::init( ): %d\n", Status );
 
 
 	//
@@ -135,7 +132,7 @@ int main( ) {
 		"NtUserSetCursorPos",
 		GetSystemMetrics( 0 ) / 2,
 		GetSystemMetrics( 1 ) / 2 );
-	printf( "inline_syscall::invoke( ): %x\n", Status );
+	printf( "inline_syscall::invoke( ): %d\n", Status );
 
 
 	//
