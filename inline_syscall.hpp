@@ -175,7 +175,7 @@ returnType inline_syscall::invoke( LPCSTR ServiceName, args... arguments ) {
 #endif
 
 
-
+	
 	typedef returnType __stdcall NtFunction( args... );
 	NtFunction* Function = ( NtFunction* )SystemCallStub;
 
@@ -219,13 +219,6 @@ returnType inline_syscall::invoke( LPCSTR ServiceName, args... arguments ) {
 				
 			
 		#else
-
-			//
-			//	If i points to win32k.sys call
-			//	return 0 because they don't work on x86
-			//
-			if( i == 1 )
-				return ( returnType )IS_INCOMPATIBLE;
 
 			//
 			//	Small check against modified stubs
