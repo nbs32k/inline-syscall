@@ -27,7 +27,7 @@ int main( ) {
     IO_STATUS_BLOCK IoBlock;
 
     Status = inline_syscall::init( );
-    printf( "inline_syscall::init( ): %x\n", Status );
+    printf( "inline_syscall::init( ): %d\n", Status );
 
     hHandle = CreateFileA(
         "C:\\Users\\leet\\Desktop\\test.txt",
@@ -71,7 +71,7 @@ int main( ) {
 
 
     Status = inline_syscall::init( );
-    printf( "inline_syscall::init( ): %x\n", Status );
+    printf( "inline_syscall::init( ): %d\n", Status );
 
     Status = inline_syscall::invoke< BOOL >(
         "NtUserSetCursorPos",
