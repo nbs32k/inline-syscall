@@ -12,6 +12,9 @@ Well, there are a lot of reasons. MSVC supports inline assembly just for the x86
 This library allows easy inlining for both x86 and x64 and also supports the win32k service table (gdi, user32 functions).
 It is also very lightweight.
 
+# Known issues
+x86 support for win32k.sys calls doesn't work as of [line 227](https://github.com/n00bes/inline-syscall/blob/5c42f68cd612742f6aceb5ef8e5bd3f72840e014/inline_syscall.hpp#L227). Win32u.dll' stub just crashes the code.
+
 # Code example
 Include the header and initialize the library by calling `inline_syscall::init( )` function.
 
@@ -20,66 +23,126 @@ To invoke a system call, use the `inline_syscall::invoke<returnType>(NtXxX, ...)
 * ntoskrnl.exe system service example of writing to a file:
 ```cpp
 #include "inline_syscall.hpp"
+
+typedef struct _IO_STATUS_BLOCK
+{
+	union
+	{
+		NTSTATUS Status;
+		PVOID    Pointer;
+	};
+	ULONG_PTR Information;
+} IO_STATUS_BLOCK, * PIO_STATUS_BLOCK;
+
 int main( ) {
 
-    NTSTATUS Status;
-    HANDLE hHandle;
-    IO_STATUS_BLOCK IoBlock;
 
-    Status = inline_syscall::init( );
-    printf( "inline_syscall::init( ): %d\n", Status );
+	NTSTATUS Status;
+	HANDLE hHandle;
+	IO_STATUS_BLOCK IoBlock;
 
-    hHandle = CreateFileA(
-        "C:\\Users\\leet\\Desktop\\test.txt",
-        GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_WRITE | FILE_SHARE_READ,
-        NULL,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        NULL
-    );
-    
-    BYTE* pog = new BYTE[ 512 ];
-    memset( pog, 0x69, 512 );
 
-    Status = inline_syscall::invoke<NTSTATUS>(
-        "NtWriteFile",
-        hHandle,
-        0,
-        0,
-        0,
-        &IoBlock,
-        pog,
-        512,
-        0,
-        0
-        );
-    printf( "inline_syscall::invoke( ): %x\n", Status );
+	//
+	//	Initialize the library
+	//
+	Status = inline_syscall::init( );
+	printf( "inline_syscall::init( ): %d\n", Status );
 
-    CloseHandle( hHandle );
 
-    inline_syscall::unload( );
+	//
+	//	Create a file and store its handle
+	//
+	hHandle = CreateFileA(
+		"C:\\Users\\leet\\Desktop\\test.txt",
+		GENERIC_READ | GENERIC_WRITE,
+		FILE_SHARE_WRITE | FILE_SHARE_READ,
+		NULL,
+		CREATE_ALWAYS,
+		FILE_ATTRIBUTE_NORMAL,
+		NULL
+	);
+
+
+	//
+	//	Allocate heap memory
+	//	for file content
+	//
+	BYTE* pog = new BYTE[ 512 ];
+	memset( pog, 0x69, 512 );
+
+
+	//
+	//	Invoke syscall
+	//
+	Status = inline_syscall::invoke<NTSTATUS>(
+		"NtWriteFile",
+		hHandle,
+		0,
+		0,
+		0,
+		&IoBlock,
+		pog,
+		512,
+		0,
+		0
+		);
+	printf( "inline_syscall::invoke( ): %d\n", Status );
+
+
+	//
+	//	Free allocated memory and close
+	//	the handle
+	//
+	delete[ ] pog;
+	CloseHandle( hHandle );
+
+
+	//
+	//	Unload library
+	//
+	inline_syscall::unload( );
+
+
+
+	while( 1 )
+		printf( "Hello World!\n" );
+
+
 }
 ```
 
 * win32k.sys system service example of setting the cursor position:
 ```cpp
 #include "inline_syscall.hpp"
+
 int main( ) {
 
-    NTSTATUS Status;
+
+	LONG Status;
 
 
-    Status = inline_syscall::init( );
-    printf( "inline_syscall::init( ): %d\n", Status );
+	//
+	//	Initialize the library
+	//
+	Status = inline_syscall::init( );
+	printf( "inline_syscall::init( ): %x\n", Status );
 
-    Status = inline_syscall::invoke< BOOL >(
-        "NtUserSetCursorPos",
-        GetSystemMetrics( 0 ) / 2,
-        GetSystemMetrics( 1 ) / 2 );
-    printf( "inline_syscall::invoke( ): %x\n", Status );
 
-    inline_syscall::unload( );
+	//
+	//	Invoke syscall
+	//
+	Status = inline_syscall::invoke<BOOL>(
+		"NtUserSetCursorPos",
+		GetSystemMetrics( 0 ) / 2,
+		GetSystemMetrics( 1 ) / 2 );
+	printf( "inline_syscall::invoke( ): %x\n", Status );
+
+
+	//
+	//	Unload library
+	//
+	inline_syscall::unload( );
+
 }
 ```
 
