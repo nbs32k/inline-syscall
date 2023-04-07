@@ -1,4 +1,4 @@
-# inline-syscall
+# inline-syscall / now with multithreading support!
 Header-only library for the MSVC compiler allowing to generate direct syscalls, supporting both x86 and x64 platforms and both ntoskrnl and win32k services (ntdll & win32u).
 
 # System calls callback
@@ -12,12 +12,30 @@ Well, there are a lot of reasons. MSVC supports inline assembly just for the x86
 This library allows easy inlining for both x86 and x64 and also supports the win32k service table (gdi, user32 functions).
 It is also very lightweight.
 
-# Code example
-Include the header and initialize the library by calling `inline_syscall::init( )` function.
+# How to use
+Include the header and initialize the library by creating an object `inline_syscall inliner;`.
+To invoke a system call, use the object created with the `inliner.invoke<returnType>("NtXxX", ...)` function.
 
-To invoke a system call, use the `inline_syscall::invoke<returnType>(NtXxX, ...)` function.
+To check if the inliner has been correctly initialized, the return of the function `is_init()` has to be `IS_SUCCESS`/`0`.
+You can also check for errors occured while trying to call a service. The error gets set in the `last_error` field in the `inline_syscall` class and can be retrieved through the `get_error()` function.
 
-* ntoskrnl.exe system service example of writing to a file:
+Error code list:
+```cpp
+#define IS_ADDRESS_NOT_FOUND -1
+#define IS_CALLBACK_KILL_FAILURE -2
+#define IS_INTEGRITY_STUB_FAILURE -3
+#define IS_MODULE_NOT_FOUND -4
+#define IS_ALLOCATION_FAILURE -5
+#define IS_INIT_NOT_APPLIED -6
+#define IS_SUCCESS 0
+```
+
+# C++ Code examples
+
+<details>
+
+<summary>ntdll.dll</summary>
+
 ```cpp
 #include "inline_syscall.hpp"
 
@@ -31,123 +49,170 @@ typedef struct _IO_STATUS_BLOCK
 	ULONG_PTR Information;
 } IO_STATUS_BLOCK, * PIO_STATUS_BLOCK;
 
-int main( ) {
+void my_thread( ) {
 
-
-	NTSTATUS Status;
-	HANDLE hHandle;
-	IO_STATUS_BLOCK IoBlock;
-
-
-	//
-	//	Initialize the library
-	//
-	Status = inline_syscall::init( );
-	printf( "inline_syscall::init( ): %d\n", Status );
-
-
-	//
-	//	Create a file and store its handle
-	//
-	hHandle = CreateFileA(
-		"C:\\Users\\leet\\Desktop\\test.txt",
-		GENERIC_READ | GENERIC_WRITE,
-		FILE_SHARE_WRITE | FILE_SHARE_READ,
-		NULL,
-		CREATE_ALWAYS,
-		FILE_ATTRIBUTE_NORMAL,
-		NULL
-	);
-
-
-	//
-	//	Allocate heap memory
-	//	for file content
-	//
-	BYTE* pog = new BYTE[ 512 ];
-	memset( pog, 0x69, 512 );
-
-
-	//
-	//	Invoke syscall
-	//
-	Status = inline_syscall::invoke<NTSTATUS>(
-		"NtWriteFile",
-		hHandle,
-		0,
-		0,
-		0,
-		&IoBlock,
-		pog,
-		512,
-		0,
-		0
-		);
-	printf( "inline_syscall::invoke( ): %d\n", Status );
-
-
-	//
-	//	Free allocated memory and close
-	//	the handle
-	//
-	delete[ ] pog;
-	CloseHandle( hHandle );
-
-
-	//
-	//	Unload library
-	//
-	inline_syscall::unload( );
-
-
+	NTSTATUS s;
+	inline_syscall inliner;
 
 	while( 1 )
-		printf( "Hello World!\n" );
+	{
+		s = inliner.invoke<NTSTATUS>( "NtYieldExecution" );
+		printf( "NtYieldExecution: 0x%X, 0x%X\n", s, inliner.get_error() );
+	}
+		
+}
 
+
+int main( ) {
+	
+	HANDLE hCommon;
+	NTSTATUS status;
+	IO_STATUS_BLOCK iosb{};
+
+
+	//
+	//	Initialize the inliner
+	//
+	inline_syscall inliner;
+
+
+	//
+	//	Check if inliner is ready
+	//
+	if( !inliner.is_init( ) )
+	{
+		printf( "inline_syscall failed initialization (0x%X)!\n", inliner.get_error( ) );
+		return 1;
+	}
+
+
+	//
+	//	Initialize new thread
+	//
+	hCommon = CreateThread( 0, 0, ( LPTHREAD_START_ROUTINE )my_thread, 0, 0, 0 );
+	if( hCommon == INVALID_HANDLE_VALUE )
+	{
+		printf( "couldn't create thread! (0x%X)\n", GetLastError( ) );
+		return 1;
+	}
+	CloseHandle( hCommon );
+
+
+	//
+	//	Create handle to test.txt file
+	//
+	hCommon = CreateFileA( "test.txt", GENERIC_READ | GENERIC_WRITE,
+				 FILE_SHARE_WRITE | FILE_SHARE_READ,
+				 NULL,
+				 CREATE_ALWAYS,
+				 FILE_ATTRIBUTE_NORMAL,
+				 NULL );
+
+	if( hCommon == INVALID_HANDLE_VALUE )
+	{
+		printf( "couldn't create file! (0x%X)\n", GetLastError( ) );
+		return 1;
+	}
+	
+
+	//
+	//	Allocate memory for content
+	//	and write the file
+	//
+	BYTE* content = new BYTE[ 5 ];
+	for( int i = 0; i < 1000; i++ )
+	{
+		
+		sprintf( ( char* )content, "%03d\n", i );
+		
+		//
+		//	Call service
+		//
+		status = inliner.invoke<NTSTATUS>( "NtWriteFile",
+										   hCommon, 0, 0, 0,
+										   &iosb, content,
+										   4, 0, 0 );
+		//
+		//	Check if the invocation has succeeded
+		//
+		if( inliner.get_error( ) != IS_SUCCESS )
+		{
+			printf( "inline_syscall failed to call service (0x%X)!\n", inliner.get_error( ) );
+			return 1;
+		}
+
+		//
+		//	Print the status code
+		//
+		printf( "NtWriteFile: 0x%X\n", status );
+	}
+	CloseHandle( hCommon );
+
+	inliner.unload( );
+	
 
 }
 ```
+</details>
 
-* win32k.sys system service example of setting the cursor position:
+<details>
+
+<summary>win32u.dll</summary>
+
 ```cpp
 #include "inline_syscall.hpp"
 
 int main( ) {
 
-
-	LONG Status;
-
-
-	//
-	//	Initialize the library
-	//
-	Status = inline_syscall::init( );
-	printf( "inline_syscall::init( ): %d\n", Status );
+	NTSTATUS status;
 
 
 	//
-	//	Invoke syscall
+	//	Initialize the inliner
 	//
-	Status = inline_syscall::invoke<BOOL>(
-		"NtUserSetCursorPos",
-		GetSystemMetrics( 0 ) / 2,
-		GetSystemMetrics( 1 ) / 2 );
-	printf( "inline_syscall::invoke( ): %d\n", Status );
+	inline_syscall inliner;
+	
+
+	//
+	//	Check if inliner is ready
+	//
+	if( !inliner.is_init( ) )
+	{
+		printf( "inline_syscall failed initialization (0x%X)!\n", inliner.get_error( ) );
+		return 1;
+	}
 
 
 	//
-	//	Unload library
+	//	Call service
 	//
-	inline_syscall::unload( );
+	status = inliner.invoke<BOOL>( "NtUserSetCursorPos",
+					GetSystemMetrics( 0 ) / 2,
+					GetSystemMetrics( 1 ) / 2 );
+
+	//
+	//	Check if the invocation has succeeded
+	//
+	if( inliner.get_error( ) != IS_SUCCESS )
+	{
+		printf( "inline_syscall failed to call service (0x%X)!\n", inliner.get_error( ) );
+		return 1;
+	}
+
+	//
+	//	Print the status code
+	//
+	printf( "NtUserSetCursorPos %X\n", status );
+
+	inliner.unload( );
+
 
 }
 ```
 
+</details>
+
+
 # Unloading procedure
-To unload, simply call the `inline_syscall::unload();` procedure to free any allocated memory by the library.
-
-# Demonstration
-
-
-https://user-images.githubusercontent.com/68382500/229877717-f827703a-be86-4056-9258-ec017597d645.mp4
+To unload, simply call the `unload();` procedure to free any allocated memory by the library.
 
