@@ -4,12 +4,10 @@
 
 #define IS_ADDRESS_NOT_FOUND -1
 #define IS_CALLBACK_KILL_FAILURE -2
-#define IS_INIT_FAILURE -3
-#define IS_INTEGRITY_STUB_FAILURE -4
-#define IS_MODULE_NOT_FOUND -5
-#define IS_ALLOCATION_FAILURE -6
-#define IS_INIT_NOT_APPLIED -7
-#define IS_INCOMPATIBLE -8
+#define IS_INTEGRITY_STUB_FAILURE -3
+#define IS_MODULE_NOT_FOUND -4
+#define IS_ALLOCATION_FAILURE -5
+#define IS_INIT_NOT_APPLIED -6
 #define IS_SUCCESS 0
 
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
@@ -17,22 +15,40 @@
 
 
 HINSTANCE hSubsystemInstances[ 2 ];
-UCHAR* SystemCallStub;
-
 
 class inline_syscall
 {
 
 	public:
 
-		static INT init( );
-		static VOID unload( );
-		static INT callback( );
+		inline_syscall( );
+		void unload( );
+		void callback( );
+
+		void set_error( int error_code ) {
+			last_error = error_code;
+		}
+
+		int get_error( ) {
+			return last_error;
+		}
+
+		bool is_init( ) {
+			return initialized;
+		}
+
+		UCHAR* get_stub(  ) {
+			return syscall_stub;
+		}
+		
 
 		template <typename returnType, typename ...args>
-		static returnType invoke( LPCSTR ServiceName, args... arguments );
+		returnType invoke( LPCSTR ServiceName, args... arguments );
 
 	private:
+		int last_error;
+		bool initialized;
+		UCHAR* syscall_stub;
 
 		typedef NTSTATUS __stdcall pNtSetInformationProcess(
 			HANDLE ProcessHandle,
@@ -50,7 +66,76 @@ class inline_syscall
 
 };
 
-INT inline_syscall::callback( ) {
+
+
+inline_syscall::inline_syscall( ) {
+
+	NTSTATUS Status;
+	UINT i;
+
+	initialized = 0;
+	syscall_stub = 0;
+	last_error = IS_INIT_NOT_APPLIED;
+
+
+	//
+	//	Fill hSubsystemInstances
+	//
+	hSubsystemInstances[ 0 ] = LoadLibraryA( "ntdll.dll" );
+	hSubsystemInstances[ 1 ] = LoadLibraryA( "win32u.dll" );
+
+	//
+	//	Could not load the modules??
+	//
+	for( i = 0; i < sizeof hSubsystemInstances / sizeof HINSTANCE; i++ )
+		if( hSubsystemInstances[ i ] == nullptr )
+		{
+			last_error = IS_MODULE_NOT_FOUND;
+			return;
+		}
+			
+
+
+
+
+
+	//
+	//	Setup the system call stub
+	//	as in NTDLL.DLL services
+	//
+	syscall_stub = ( UCHAR* )VirtualAlloc( NULL, 21, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE );
+	if( syscall_stub == nullptr )
+	{
+		last_error = IS_CALLBACK_KILL_FAILURE;
+		return;
+	}
+		
+
+#ifdef _M_X64
+	//
+	//	Syscall stub shellcode
+	//
+	memcpy( syscall_stub, "\x4C\x8B\xD1\xB8\x00\x00\x00\x00\x0F\x05\xC3", 11 );
+#endif
+
+
+
+	//
+	//	Try killing callbacks
+	//
+
+#ifndef _ALLOW_MONITOR
+	callback( );
+	if( last_error != IS_SUCCESS )
+		return;
+		
+#endif
+
+	last_error = IS_SUCCESS;
+	initialized = 1;
+}
+
+void inline_syscall::callback( ) {
 
 	//
 	//	Kill any system call callback
@@ -64,7 +149,11 @@ INT inline_syscall::callback( ) {
 
 	NtSetInformationProcess = ( pNtSetInformationProcess* )GetProcAddress( hSubsystemInstances[ 0 ], "NtSetInformationProcess" );
 	if( NtSetInformationProcess == nullptr )
-		return IS_ADDRESS_NOT_FOUND;
+	{
+		inline_syscall::set_error( IS_ADDRESS_NOT_FOUND );
+		return;
+	}
+	
 
 
 	//
@@ -82,73 +171,23 @@ INT inline_syscall::callback( ) {
 		sizeof( SyscallCallback ) );
 
 	if( !NT_SUCCESS( Status ) )
-		return IS_CALLBACK_KILL_FAILURE;
+	{
+		inline_syscall::set_error( IS_CALLBACK_KILL_FAILURE );
+		return;
+	}
+		
 
-
-	return IS_SUCCESS;
-
-}
-
-INT inline_syscall::init( ) {
-
-
-	NTSTATUS Status;
-	UINT i;
-
-	//
-	//	Fill hSubsystemInstances
-	//
-	hSubsystemInstances[ 0 ] = LoadLibraryA( "ntdll.dll" );
-	hSubsystemInstances[ 1 ] = LoadLibraryA( "win32u.dll" );
-
-	//
-	//	Could not load the modules??
-	//
-	for( i = 0; i < sizeof hSubsystemInstances / sizeof HINSTANCE; i++ )
-		if( hSubsystemInstances[ i ] == nullptr )
-			return IS_MODULE_NOT_FOUND;
-
-
-	
-
-
-	//
-	//	Setup the system call stub
-	//	as in NTDLL.DLL services
-	//
-	SystemCallStub = ( UCHAR* )VirtualAlloc( NULL, 21, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE );
-	if( SystemCallStub == nullptr )
-		return IS_ALLOCATION_FAILURE;
-
-#ifdef _M_X64
-	//
-	//	Syscall stub shellcode
-	//
-	memcpy( SystemCallStub, "\x4C\x8B\xD1\xB8\x00\x00\x00\x00\x0F\x05\xC3", 11 );
-#endif
-
-
-
-	//
-	//	Try killing callbacks
-	//
-
-#ifndef _ALLOW_MONITOR
-	if( inline_syscall::callback( ) != 0 )
-		return IS_CALLBACK_KILL_FAILURE;
-#endif
-
-	return IS_SUCCESS;
+	inline_syscall::set_error( IS_SUCCESS );
 
 }
 
 VOID inline_syscall::unload( ) {
 
-	if( SystemCallStub == nullptr )
+	if( inline_syscall::syscall_stub == nullptr )
 		return;
 
-	memset( SystemCallStub, 0, 21 );
-	VirtualFree( SystemCallStub, 0, MEM_RELEASE );
+	memset( inline_syscall::syscall_stub, 0, 21 );
+	VirtualFree( inline_syscall::syscall_stub, 0, MEM_RELEASE );
 
 }
 
@@ -161,8 +200,12 @@ returnType inline_syscall::invoke( LPCSTR ServiceName, args... arguments ) {
 
 	UINT i;
 
-	if( SystemCallStub == nullptr )	// Initialization not applied?
-		return ( returnType )IS_INIT_NOT_APPLIED;
+	if( !inline_syscall::initialized )	// Initialization not applied?
+	{
+		inline_syscall::set_error( IS_INIT_NOT_APPLIED );
+		return IS_INIT_NOT_APPLIED;
+	}
+
 
 
 
@@ -175,9 +218,9 @@ returnType inline_syscall::invoke( LPCSTR ServiceName, args... arguments ) {
 #endif
 
 
-	
+
 	typedef returnType __stdcall NtFunction( args... );
-	NtFunction* Function = ( NtFunction* )SystemCallStub;
+	NtFunction* Function = ( NtFunction* )inline_syscall::syscall_stub;
 
 	for( i = 0; i < sizeof hSubsystemInstances / sizeof HINSTANCE; ++i )
 	{
@@ -193,7 +236,7 @@ returnType inline_syscall::invoke( LPCSTR ServiceName, args... arguments ) {
 		//
 		if( FunctionAddress != nullptr )
 		{
-			
+
 
 		#ifdef _M_X64
 
@@ -201,13 +244,17 @@ returnType inline_syscall::invoke( LPCSTR ServiceName, args... arguments ) {
 			//	Small check against modified stubs
 			//
 			if( *( UINT* )FunctionAddress != 0xB8D18B4C ) //mov r10, rcx \ mov eax, index
-				return ( returnType )IS_INTEGRITY_STUB_FAILURE;
+			{
+				inline_syscall::set_error( IS_INTEGRITY_STUB_FAILURE );
+				return IS_INTEGRITY_STUB_FAILURE;
+			}
+
 
 			//
 			//	NtXxX + 0x4 = Syscall Index (unsigned int)
 			//
 			SystemCallIndex = ( UINT )FunctionAddress[ 4 ];
-			memcpy( SystemCallStub + 0x4, &SystemCallIndex, sizeof( UINT ) );
+			memcpy( inline_syscall::get_stub( ) + 0x4, &SystemCallIndex, sizeof( UINT ) );
 
 
 			//
@@ -215,31 +262,31 @@ returnType inline_syscall::invoke( LPCSTR ServiceName, args... arguments ) {
 			//	copy the whole stub because x86 contains additional opcodes (jne xxx)
 			//
 			if( i == 1 )
-				memcpy( SystemCallStub, FunctionAddress, 21 );
-				
-			
+				memcpy( inline_syscall::get_stub( ), FunctionAddress, 21 );
+
+
 		#else
 
 			//
 			//	Small check against modified stubs
 			//	I'd call it an integrity check because we copy the whole stub
 			//
-			if( FunctionAddress[ 0 ] != 0xB8 && 
+			if( FunctionAddress[ 0 ] != 0xB8 &&
 				FunctionAddress[ 5 ] != 0xBA ) // mov eax, index \x??\x??\x??\x?? mov edx, KiFastSystemCall
 				return ( returnType )IS_INTEGRITY_STUB_FAILURE;
 
-			memcpy( SystemCallStub, FunctionAddress, 15 );
+			memcpy( inline_syscall::get_stub( ), FunctionAddress, 15 );
 		#endif
-			
+
+			inline_syscall::set_error( IS_SUCCESS );
 			return Function( arguments... );
 		}
 
-			
+
 	}
+	inline_syscall::set_error( IS_MODULE_NOT_FOUND );
+	return IS_MODULE_NOT_FOUND;
 
-
-	return ( returnType )IS_MODULE_NOT_FOUND;
-	
 
 }
 
