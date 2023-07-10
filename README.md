@@ -1,4 +1,4 @@
-# inline-syscall / now with multithreading support!
+# inline-syscall
 Header-only library for the MSVC compiler allowing to generate direct syscalls, supporting both x86 and x64 platforms and both ntoskrnl and win32k services (ntdll & win32u).
 
 # System calls callback
